@@ -134,7 +134,7 @@ func (header *dnsHeader) SetFlag(QR uint16, OperationCode uint16, AuthoritativeA
 	header.Bits = QR<<15 + OperationCode<<11 + AuthoritativeAnswer<<10 + Truncation<<9 + RecursionDesired<<8 + RecursionAvailable<<7 + ResponseCode
 }
 
-func Send(proxyServer, domain string, dnsServer string, port uint16, isProxy bool) ([]byte, int, time.Duration) {
+func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy bool) ([]byte, int, time.Duration) {
 	pHeader := proxyHeader{
 		srv:	0x0000,
 		flag:	0,
@@ -158,24 +158,13 @@ func Send(proxyServer, domain string, dnsServer string, port uint16, isProxy boo
 	}
 
 	var (
-		conn   net.Conn
 		err    error
 		buffer bytes.Buffer
 	)
 	if isProxy {
-		if conn, err = net.Dial("udp", proxyServer); err != nil {
-			fmt.Println(err.Error())
-			return make([]byte, 0), 0, 0
-		}
 		binary.Write(&buffer, binary.BigEndian, pHeader)
-	} else {
-		dns := fmt.Sprintf("%s:%d", dnsServer, port)
-		if conn, err = net.Dial("udp", dns); err != nil {
-			fmt.Println(err.Error())
-			return make([]byte, 0), 0, 0
-		}
 	}
-	defer conn.Close()
+	//defer conn.Close()
 	binary.Write(&buffer, binary.BigEndian, requestHeader)
 	binary.Write(&buffer, binary.BigEndian, ParseDomainName(domain))
 	binary.Write(&buffer, binary.BigEndian, requestQuery)
@@ -187,6 +176,9 @@ func Send(proxyServer, domain string, dnsServer string, port uint16, isProxy boo
 		return make([]byte, 0), 0, 0
 	}
 	length, err := conn.Read(buf)
+	if err != nil {
+		log.Println(err)
+	}
 	t := time.Now().Sub(t1)
 	return buf, length, t
 }
