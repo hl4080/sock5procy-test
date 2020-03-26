@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -134,7 +135,7 @@ func (header *dnsHeader) SetFlag(QR uint16, OperationCode uint16, AuthoritativeA
 	header.Bits = QR<<15 + OperationCode<<11 + AuthoritativeAnswer<<10 + Truncation<<9 + RecursionDesired<<8 + RecursionAvailable<<7 + ResponseCode
 }
 
-func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy bool) ([]byte, int, time.Duration) {
+func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy bool) ([]byte, int, time.Duration, error) {
 	pHeader := proxyHeader{
 		srv:	0x0000,
 		flag:	0,
@@ -161,7 +162,7 @@ func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy b
 		err    error
 		buffer bytes.Buffer
 	)
-	if isProxy {
+	if isProxy {//在传输UDP数据时，由于通过代理，所以需要按照一定的格式进行包装，在需要传送的数据之前添加一个报头
 		binary.Write(&buffer, binary.BigEndian, pHeader)
 	}
 	//defer conn.Close()
@@ -171,14 +172,65 @@ func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy b
 
 	buf := make([]byte, 1024)
 	t1 := time.Now()
-	if _, err := conn.Write(buffer.Bytes()); err != nil {
-		fmt.Println(err.Error())
-		return make([]byte, 0), 0, 0
+	_, err = conn.Write(buffer.Bytes())
+	if err != nil {
+		return make([]byte, 0), 0, 0, err
 	}
 	length, err := conn.Read(buf)
 	if err != nil {
-		log.Println(err)
+		return make([]byte, 0), 0, 0, err
 	}
 	t := time.Now().Sub(t1)
-	return buf, length, t
+	return buf, length, t, nil
+}
+
+func sendUdp(connUdp net.Conn, testDomain, dnsServer string, isProxy bool) ([]byte, int, time.Duration, error) {
+	var flag int
+	for i, _ := range dnsServer{
+		if dnsServer[i] == ':'{
+			flag = i
+			break
+		}
+	}
+	dnsIp := dnsServer[0:flag]
+	dnsPortInt, err := strconv.Atoi(dnsServer[flag+1:])
+	if err != nil {
+		log.Println(err)
+	}
+	dnsPort := uint16(dnsPortInt)
+	remsg, n, t, err := Send(connUdp, testDomain, dnsIp, dnsPort, isProxy)
+	return remsg, n, t, err
+}
+
+func sock5Auth(conn net.Conn, proxyServer string) (string, error) {
+	//通过tcp连接到sock5的udp代理与代理进行验证
+	/*conn, err := net.Dial("tcp", proxyServer)
+	if err != nil {
+		return "", err
+	}*/
+	var err error
+	fmt.Printf("获取%s的tcp连接成功...\n", proxyServer)
+	reader := bufio.NewReader(conn)
+	//协商版本sock5，method的长度为1，认证的方式为0表示不认证
+	licenseReq := clientLicenseReq{5, 1, [255]byte{0}}
+	err = sendLicenseReq(conn, licenseReq)
+	if err != nil {
+		return "", err
+	}
+	err = getLicenseResp(reader)
+	if err != nil {
+		return "", err
+	}
+	//sock版本为5，3表示udp转发，rsv保留字段为0，1表示ipv4地址
+	//ip只有在多主机的有意义，暂不关心
+	connReq := clientConnReq{5, 3, 0, 1, [4]byte{0, 0, 0, 0}, [2]byte{0, 0}}
+	err = sendClientConnReq(conn, connReq)
+	if err != nil {
+		return "", err
+	}
+	proxyAddr, err := getConnResp(reader)
+	if err != nil {
+		return "", err
+	}
+	return proxyAddr, nil
 }
