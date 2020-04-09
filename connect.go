@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -135,57 +136,12 @@ func (header *dnsHeader) SetFlag(QR uint16, OperationCode uint16, AuthoritativeA
 	header.Bits = QR<<15 + OperationCode<<11 + AuthoritativeAnswer<<10 + Truncation<<9 + RecursionDesired<<8 + RecursionAvailable<<7 + ResponseCode
 }
 
-func Send(conn net.Conn, domain string, dnsServer string, port uint16, isProxy bool) ([]byte, int, time.Duration, error) {
-	pHeader := proxyHeader{
-		srv:	0x0000,
-		flag:	0,
-		atype:	1,
-		addr:	ipStringToByte(dnsServer),
-		port:	port,
-	}
-
-	requestHeader := dnsHeader{
-		Id:      0x0010,
-		Qdcount: 1,
-		Ancount: 0,
-		Nscount: 0,
-		Arcount: 0,
-	}
-	requestHeader.SetFlag(0, 0, 0, 0, 1, 0, 0)
-
-	requestQuery := dnsQuery{
-		QuestionType:  1,
-		QuestionClass: 1,
-	}
-
+func sendUdp(conn *net.Conn, buf *[]byte, dnsServer string, isProxy, isBlock bool, udpTimeOut time.Duration) ([]byte, int, time.Duration, error) {
 	var (
 		err    error
 		buffer bytes.Buffer
+		flag int
 	)
-	if isProxy {//在传输UDP数据时，由于通过代理，所以需要按照一定的格式进行包装，在需要传送的数据之前添加一个报头
-		binary.Write(&buffer, binary.BigEndian, pHeader)
-	}
-	//defer conn.Close()
-	binary.Write(&buffer, binary.BigEndian, requestHeader)
-	binary.Write(&buffer, binary.BigEndian, ParseDomainName(domain))
-	binary.Write(&buffer, binary.BigEndian, requestQuery)
-
-	buf := make([]byte, 1024)
-	t1 := time.Now()
-	_, err = conn.Write(buffer.Bytes())
-	if err != nil {
-		return make([]byte, 0), 0, 0, err
-	}
-	length, err := conn.Read(buf)
-	if err != nil {
-		return make([]byte, 0), 0, 0, err
-	}
-	t := time.Now().Sub(t1)
-	return buf, length, t, nil
-}
-
-func sendUdp(connUdp net.Conn, testDomain, dnsServer string, isProxy bool) ([]byte, int, time.Duration, error) {
-	var flag int
 	for i, _ := range dnsServer{
 		if dnsServer[i] == ':'{
 			flag = i
@@ -198,18 +154,93 @@ func sendUdp(connUdp net.Conn, testDomain, dnsServer string, isProxy bool) ([]by
 		log.Println(err)
 	}
 	dnsPort := uint16(dnsPortInt)
-	remsg, n, t, err := Send(connUdp, testDomain, dnsIp, dnsPort, isProxy)
-	return remsg, n, t, err
+	queryId := uint16(rand.Int())
+	//remsg, n, t, err := Send(connUdp, testDomain, dnsIp, dnsPort, isProxy)
+	pHeader := proxyHeader{
+		srv:	0x0000,
+		flag:	0,
+		atype:	1,
+		addr:	ipStringToByte(dnsIp),
+		port:	dnsPort,
+	}
+	var (
+		requestHeader dnsHeader
+		requestQuery dnsQuery
+		requestAddition dnsAdditional
+	)
+	if isBlock {
+		requestHeader = dnsHeader{
+			Id:      queryId,
+			Qdcount: 1,
+			Ancount: 0,
+			Nscount: 0,
+			Arcount: 1,
+		}
+		requestHeader.SetFlag(0, 0, 0, 1, 0, 0, 0x20)
+		requestQuery = dnsQuery{
+			QuestionType: 	15,
+			QuestionClass: 	1,
+		}
+		requestAddition = dnsAdditional{
+			Name:    0,
+			Type:    41,
+			Payload: 4096,
+			Extend:  0,
+			Version: 0,
+			Z:       0,
+			DataLen: 0,
+		}
+	}else{
+		requestHeader = dnsHeader{
+			Id:      queryId,
+			Qdcount: 1,
+			Ancount: 0,
+			Nscount: 0,
+			Arcount: 0,
+		}
+		requestHeader.SetFlag(0, 0, 0, 0, 1, 0, 0)
+		requestQuery = dnsQuery{
+			QuestionType: 	1,
+			QuestionClass: 	1,
+		}
+	}
+	if isProxy {	//在传输UDP数据时，由于通过代理，所以需要按照一定的格式进行包装，在需要传送的数据之前添加一个报头
+		binary.Write(&buffer, binary.BigEndian, pHeader)
+	}
+	binary.Write(&buffer, binary.BigEndian, requestHeader)
+	//binary.Write(&buffer, binary.BigEndian, ParseDomainName(domain))
+	binary.Write(&buffer, binary.BigEndian, ParseDomainName(randDomainEvoke(5)))
+	binary.Write(&buffer, binary.BigEndian, requestQuery)
+	if isBlock {	//udp大块传输需要添加的additional record
+		binary.Write(&buffer, binary.BigEndian, requestAddition)
+	}
+	t1 := time.Now()
+	_, err = (*conn).Write(buffer.Bytes())
+	if err != nil {
+		return make([]byte, 0), 0, 0, err
+	}
+	(*conn).SetReadDeadline(time.Now().Add(udpTimeOut))
+	length, err := (*conn).Read(*buf)
+	if err != nil {
+		return make([]byte, 0), 0, 0, err
+	}
+	t := time.Now().Sub(t1)
+	rcvId := uint16((*buf)[10])*256 + uint16((*buf)[11])
+	for rcvId != queryId {
+		(*conn).SetReadDeadline(time.Now().Add(udpTimeOut))
+		length, err = (*conn).Read(*buf)
+		if err != nil {
+			return make([]byte, 0), 0, 0, err
+		}
+		rcvId = uint16((*buf)[10])*256 + uint16((*buf)[11])
+	}
+	return *buf, length, t, err
 }
 
 func sock5Auth(conn net.Conn, proxyServer string) (string, error) {
 	//通过tcp连接到sock5的udp代理与代理进行验证
-	/*conn, err := net.Dial("tcp", proxyServer)
-	if err != nil {
-		return "", err
-	}*/
 	var err error
-	fmt.Printf("获取%s的tcp连接成功...\n", proxyServer)
+	//fmt.Printf("获取%s的tcp连接成功...\n", proxyServer)
 	reader := bufio.NewReader(conn)
 	//协商版本sock5，method的长度为1，认证的方式为0表示不认证
 	licenseReq := clientLicenseReq{5, 1, [255]byte{0}}
@@ -233,4 +264,31 @@ func sock5Auth(conn net.Conn, proxyServer string) (string, error) {
 		return "", err
 	}
 	return proxyAddr, nil
+}
+
+func funcTest(proxyServer, dnsServer string, isProxy, isBlock bool, bufSize uint32) {
+	var (
+		conn 	net.Conn
+		connUdp 	net.Conn
+	)
+	conn, err := net.Dial("tcp", proxyServer)
+	if err != nil {
+		fmt.Println(err)
+	}
+	proxyAddr, err := sock5Auth(conn, proxyServer)
+	if err != nil {
+		log.Print(err)
+	}
+	//需要提前创建udp连接，只能开一个socket ，不能多次创建socket,可以保证一次socket完成多次udp传送
+	if isProxy {
+		connUdp, err = net.Dial("udp", proxyAddr)
+	}else{
+		connUdp, err = net.Dial("udp", dnsServer)
+	}
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	buf := make([]byte, bufSize)
+	msg, n, t, err := sendUdp(&connUdp, &buf, dnsServer, isProxy, isBlock, udpTimeOut)
+	fmt.Println(msg, n, t)
 }

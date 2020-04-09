@@ -9,16 +9,23 @@ var (
 	total   	float64 		= 0.0
 	success 	float64 		= 0.0
 	failure 	float64 		= 0.0
-	assistNum	int 			= 2000  //并发请求的协程数
-	assistTime	int				= 2		//每个协程请求的udp数
-	isProxy 	bool 			= true 					//是否通过代理进行dns 查询
+	assistNum	int 			= 100  //并发请求的协程数
+	assistQuery	uint64			= 1844674407370955161		//保证每个协程内的数据能一直收发
+	queryTime	int64			= 60	//持续请求的时间
+	isProxy 	bool 			= true 	//是否通过代理进行dns 查询
+	isBlock		bool			= false	//udp大块传输
 	proxyServer string 			= "10.20.47.145:1080" 	//sock5代理服务器的ip地址
-	dnsServer 	string 			= "116.211.173.141:53" 	//需要请求的dns server的ip地址
-	domain 		string 			= "www.byted.online" 		//想知道ip的域名地址
-	udpTimeOut	time.Duration	= 2000 	//udp超时设置800ms
+	dnsServer 	string 			= "121.29.51.141:53" 	//需要请求的dns server的ip地址
+	domain 		string 			= "www.byted.online" 	//想知道ip的域名地址
+	bufSize		uint32			= 1024					//dns收发包的缓存大小
+	sockTimeOut	time.Duration	= 80*time.Second 		//socket超时设置
+	udpTimeOut	time.Duration	= 800*time.Millisecond 	//udp超时设置
+	delayList	[]int64
 	wg			sync.WaitGroup
-	mutex 		sync.Mutex
+	countMutex 	sync.Mutex
+	delayMutex	sync.Mutex
 )
+
 
 type clientLicenseReq struct {
 	ver byte
@@ -55,6 +62,16 @@ type dnsHeader struct {
 type dnsQuery struct {
 	QuestionType  uint16
 	QuestionClass uint16
+}
+
+type dnsAdditional struct {
+	Name 	uint8
+	Type 	uint16
+	Payload uint16
+	Extend 	uint8
+	Version uint8
+	Z		uint16
+	DataLen uint16
 }
 
 type proxyHeader struct {
