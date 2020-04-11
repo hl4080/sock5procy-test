@@ -51,7 +51,12 @@ func runsock5UdpForTest(num uint64, proxyServer string, t0, queryTime int64, soc
 	conn, err := net.Dial("tcp", proxyServer)
 	proxyAddr, err := sock5Auth(conn, proxyServer)
 	//需要提前创建udp连接，只能开一个socket ，可以保证一次socket完成多次udp传送
-	connUdp, err = net.DialTimeout("udp", proxyAddr, sockTimeOut)
+	if isProxy {
+		connUdp, err = net.DialTimeout("udp", proxyAddr, sockTimeOut)
+	}else{
+		connUdp, err = net.DialTimeout("udp", dnsServer, sockTimeOut)
+	}
+	//connUdp, err = net.DialTimeout("udp", proxyAddr, sockTimeOut)
 	if err != nil {
 		fmt.Println(err.Error())
 	}

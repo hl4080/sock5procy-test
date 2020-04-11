@@ -225,14 +225,24 @@ func sendUdp(conn *net.Conn, buf *[]byte, dnsServer string, isProxy, isBlock boo
 		return make([]byte, 0), 0, 0, err
 	}
 	t := time.Now().Sub(t1)
-	rcvId := uint16((*buf)[10])*256 + uint16((*buf)[11])
-	for rcvId != queryId {
+	var rsvId uint16
+	if isProxy {
+		rsvId = uint16((*buf)[10])*256 + uint16((*buf)[11])
+	} else {
+		rsvId = uint16((*buf)[0])*256 + uint16((*buf)[1])
+	}
+	for rsvId != queryId {
 		(*conn).SetReadDeadline(time.Now().Add(udpTimeOut))
 		length, err = (*conn).Read(*buf)
 		if err != nil {
+			fmt.Println(err)
 			return make([]byte, 0), 0, 0, err
 		}
-		rcvId = uint16((*buf)[10])*256 + uint16((*buf)[11])
+		if isProxy {
+			rsvId = uint16((*buf)[10])*256 + uint16((*buf)[11])
+		} else {
+			rsvId = uint16((*buf)[0])*256 + uint16((*buf)[1])
+		}
 	}
 	return *buf, length, t, err
 }

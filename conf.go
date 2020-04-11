@@ -12,10 +12,10 @@ var (
 	assistNum	int 			= 100  //并发请求的协程数
 	assistQuery	uint64			= 1844674407370955161		//保证每个协程内的数据能一直收发
 	queryTime	int64			= 60	//持续请求的时间
-	isProxy 	bool 			= true 	//是否通过代理进行dns 查询
+	isProxy 	bool 			= false 	//是否通过代理进行dns 查询
 	isBlock		bool			= false	//udp大块传输
-	proxyServer string 			= "10.20.47.145:1080" 	//sock5代理服务器的ip地址
-	dnsServer 	string 			= "121.29.51.141:53" 	//需要请求的dns server的ip地址
+	proxyServer string 			= "10.20.47.145:1090" 	//sock5代理服务器的ip地址
+	dnsServer 	string 			= "203.119.159.121:53" 	//需要请求的dns server的ip地址
 	domain 		string 			= "www.byted.online" 	//想知道ip的域名地址
 	bufSize		uint32			= 1024					//dns收发包的缓存大小
 	sockTimeOut	time.Duration	= 80*time.Second 		//socket超时设置
